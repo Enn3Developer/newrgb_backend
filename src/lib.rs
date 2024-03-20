@@ -4,10 +4,13 @@ use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
+use std::sync::{Mutex, TryLockError, TryLockResult};
 
 use walkdir::{DirEntry, WalkDir};
 use zip::write::FileOptions;
 use zip::CompressionMethod;
+
+static LOCK: Mutex<()> = Mutex::new(());
 
 async fn zip_dir<T, P: AsRef<Path>>(
     it: &mut dyn Iterator<Item = DirEntry>,
@@ -59,6 +62,14 @@ pub async fn zip_all<P: AsRef<Path> + AsRef<OsStr>>(dir_path: P) {
 }
 
 pub async fn generate_zip() {
+    let (_l, locked) = match LOCK.try_lock() {
+        Ok(l) => (l, false),
+        Err(TryLockError::WouldBlock) => (LOCK.lock().unwrap(), true),
+        Err(TryLockError::Poisoned(_)) => (LOCK.lock().unwrap(), false),
+    };
+    if locked {
+        return;
+    }
     rt::spawn(async {
         zip_all("data").await;
         fs::rename("new.zip", "newrgb.zip").unwrap();
