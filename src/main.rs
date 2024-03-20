@@ -1,5 +1,6 @@
 use actix_files::NamedFile;
-use actix_web::{get, App, HttpServer, Responder, Result};
+use actix_web::{get, web, App, Error, HttpServer, Responder, Result};
+use std::fmt::format;
 use std::io;
 use std::path::Path;
 
@@ -17,6 +18,11 @@ async fn generate_zip() -> impl Responder {
     "Done"
 }
 
+#[get("/background/{i}.png")]
+async fn background(i: web::Path<u32>) -> Result<NamedFile> {
+    Ok(NamedFile::open(&format!("background/{i}.png"))?)
+}
+
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     let ip = if cfg!(debug_assertions) {
@@ -24,8 +30,13 @@ async fn main() -> io::Result<()> {
     } else {
         "0.0.0.0"
     };
-    HttpServer::new(|| App::new().service(index).service(generate_zip))
-        .bind((ip, 6969))?
-        .run()
-        .await
+    HttpServer::new(|| {
+        App::new()
+            .service(index)
+            .service(generate_zip)
+            .service(background)
+    })
+    .bind((ip, 6969))?
+    .run()
+    .await
 }
