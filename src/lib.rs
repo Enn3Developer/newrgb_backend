@@ -1,11 +1,11 @@
-use actix_web::rt;
 use std::ffi::OsStr;
 use std::fs;
 use std::fs::File;
 use std::io::{Read, Seek, Write};
 use std::path::Path;
-use std::sync::{Mutex, TryLockError, TryLockResult};
 
+use actix_web::rt;
+use async_mutex::Mutex;
 use walkdir::{DirEntry, WalkDir};
 use zip::write::FileOptions;
 use zip::CompressionMethod;
@@ -63,9 +63,8 @@ pub async fn zip_all<P: AsRef<Path> + AsRef<OsStr>>(dir_path: P) {
 
 pub async fn generate_zip() {
     let (_l, locked) = match LOCK.try_lock() {
-        Ok(l) => (l, false),
-        Err(TryLockError::WouldBlock) => (LOCK.lock().unwrap(), true),
-        Err(TryLockError::Poisoned(_)) => (LOCK.lock().unwrap(), false),
+        Some(l) => (l, false),
+        None => (LOCK.lock().await, true),
     };
     if locked {
         return;
