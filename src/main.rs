@@ -1,6 +1,5 @@
 use actix_files::NamedFile;
-use actix_web::{get, web, App, Error, HttpServer, Responder, Result};
-use std::fmt::format;
+use actix_web::{get, web, App, HttpServer, Responder, Result};
 use std::io;
 use std::path::Path;
 

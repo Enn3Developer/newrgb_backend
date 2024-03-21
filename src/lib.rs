@@ -54,7 +54,7 @@ pub async fn zip_all<P: AsRef<Path> + AsRef<OsStr>>(dir_path: P) {
         &mut it.filter_map(|e| e.ok()),
         dir_path,
         file,
-        CompressionMethod::Zstd,
+        CompressionMethod::Deflated,
     )
     .await
     .unwrap();
