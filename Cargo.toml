@@ -12,3 +12,6 @@ async-walkdir = "1.0.0"
 async_zip = { version = "0.0.16", features = ["deflate"] }
 futures-lite = "2.3.0"
 rocket = "0.5.0"
+
+[profile.release]
+lto = "fat"

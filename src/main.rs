@@ -2,12 +2,18 @@
 extern crate rocket;
 
 use rocket::fs::NamedFile;
+use rocket::response::Redirect;
 use rocket::{Build, Rocket};
 use std::io;
 use std::path::Path;
 
 #[get("/")]
-async fn index() -> io::Result<NamedFile> {
+async fn index() -> Redirect {
+    Redirect::to(uri!("/newrgb.zip"))
+}
+
+#[get("/newrgb.zip")]
+async fn newrgb() -> io::Result<NamedFile> {
     if !Path::new("newrgb.zip").exists() {
         newrgb_backend::generate_zip().await?
     }
@@ -27,5 +33,5 @@ async fn background(i: usize) -> io::Result<NamedFile> {
 
 #[launch]
 fn rocket() -> Rocket<Build> {
-    rocket::build().mount("/", routes![index, generate_zip, background])
+    rocket::build().mount("/", routes![index, generate_zip, background, newrgb])
 }
