@@ -1,77 +1,100 @@
-use actix_web::rt;
-use async_mutex::Mutex;
 use std::ffi::OsStr;
-use std::fs;
-use std::fs::File;
-use std::io::{Read, Seek, Write};
+use std::io;
 use std::path::Path;
-use walkdir::{DirEntry, WalkDir};
-use zip::write::FileOptions;
-use zip::CompressionMethod;
+use std::sync::Arc;
+
+use async_fs::File;
+use async_mutex::Mutex;
+use async_walkdir::WalkDir;
+use async_zip::base::write::ZipFileWriter;
+use async_zip::error::Result;
+use async_zip::{Compression, ZipEntryBuilder, ZipString};
+use futures_lite::stream::StreamExt;
+use futures_lite::AsyncReadExt;
+use rocket::tokio;
 
 static LOCK: Mutex<()> = Mutex::new(());
 
-async fn zip_dir<T, P: AsRef<Path>>(
-    it: &mut dyn Iterator<Item = DirEntry>,
+async fn zip_dir<P: AsRef<Path>>(
+    wk: &mut WalkDir,
     prefix: P,
-    writer: T,
-    method: CompressionMethod,
-) -> zip::result::ZipResult<()>
+    writer: File,
+    method: Compression,
+) -> Result<()>
 where
-    T: Write + Seek,
     P: AsRef<OsStr>,
 {
-    let mut zip = zip::ZipWriter::new(writer);
-    let options = FileOptions::default()
-        .compression_method(method)
-        .unix_permissions(0o755);
-
-    let mut buffer = Vec::new();
-    for entry in it {
-        let path = entry.path();
-        let name = path.strip_prefix(Path::new(&prefix)).unwrap();
-        if path.is_file() {
-            #[allow(deprecated)]
-            zip.start_file_from_path(name, options)?;
-            let mut f = File::open(path)?;
-            f.read_to_end(&mut buffer)?;
-            zip.write_all(&buffer)?;
-            buffer.clear();
-        } else if !name.as_os_str().is_empty() {
-            #[allow(deprecated)]
-            zip.add_directory_from_path(name, options)?;
+    let zip = Arc::new(Mutex::new(ZipFileWriter::new(writer)));
+    let mut handles = vec![];
+    while let Some(entry) = wk.next().await {
+        if let Ok(entry) = entry {
+            let path = entry.path();
+            let name = ZipString::from(
+                path.strip_prefix(Path::new(&prefix))
+                    .unwrap()
+                    .to_str()
+                    .unwrap(),
+            );
+            if path.is_file() {
+                let zip = zip.clone();
+                let handle = tokio::spawn(async move {
+                    let mut buffer = Vec::new();
+                    let mut f = File::open(&path).await.unwrap();
+                    f.read_to_end(&mut buffer).await.unwrap();
+                    zip.lock()
+                        .await
+                        .write_entry_whole(
+                            ZipEntryBuilder::new(name, method)
+                                .unix_permissions(0o755)
+                                .build(),
+                            &buffer,
+                        )
+                        .await
+                        .expect("can't write to zip");
+                });
+                handles.push(handle);
+            }
         }
     }
-    zip.finish()?;
+
+    for handle in handles {
+        handle
+            .await
+            .map_err(|_| io::Error::from(io::ErrorKind::Other))?;
+    }
+
+    Arc::try_unwrap(zip)
+        .map_err(|_| io::Error::from(io::ErrorKind::Other))?
+        .into_inner()
+        .close()
+        .await?;
     Ok(())
 }
 
-pub async fn zip_all<P: AsRef<Path> + AsRef<OsStr>>(dir_path: P) {
-    let file = File::create("new.zip").unwrap();
-    let walk_dir = WalkDir::new(&dir_path);
-    let it = walk_dir.into_iter();
-    zip_dir(
-        &mut it.filter_map(|e| e.ok()),
-        dir_path,
-        file,
-        CompressionMethod::Deflated,
-    )
-    .await
-    .unwrap();
+pub async fn zip_all<P: AsRef<Path> + AsRef<OsStr>>(dir_path: P) -> io::Result<()> {
+    let file = File::create("new.zip").await?;
+    let mut walk_dir = WalkDir::new(&dir_path);
+    zip_dir(&mut walk_dir, dir_path, file, Compression::Deflate)
+        .await
+        .map_err(|_| io::Error::from(io::ErrorKind::Other))?;
+
+    Ok(())
 }
 
-pub async fn generate_zip() {
+pub async fn generate_zip() -> io::Result<()> {
     let (_l, locked) = match LOCK.try_lock() {
         Some(l) => (l, false),
         None => (LOCK.lock().await, true),
     };
     if locked {
-        return;
+        return Ok(());
     }
-    rt::spawn(async {
-        zip_all("data").await;
-        fs::rename("new.zip", "newrgb.zip").unwrap();
+    tokio::spawn(async {
+        zip_all("data").await.expect("failed zip_all");
+        async_fs::rename("new.zip", "newrgb.zip")
+            .await
+            .expect("failed rename");
     })
     .await
-    .expect("zip_all failed");
+    .map_err(|_| io::Error::from(io::ErrorKind::Other))
 }

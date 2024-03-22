@@ -1,41 +1,31 @@
-use actix_files::NamedFile;
-use actix_web::{get, web, App, HttpServer, Responder, Result};
+#[macro_use]
+extern crate rocket;
+
+use rocket::fs::NamedFile;
+use rocket::{Build, Rocket};
 use std::io;
 use std::path::Path;
 
 #[get("/")]
-async fn index() -> Result<NamedFile> {
+async fn index() -> io::Result<NamedFile> {
     if !Path::new("newrgb.zip").exists() {
-        newrgb_backend::generate_zip().await
+        newrgb_backend::generate_zip().await?
     }
-    Ok(NamedFile::open("newrgb.zip")?)
+    NamedFile::open("newrgb.zip").await
 }
 
 #[get("/generate_zip")]
-async fn generate_zip() -> impl Responder {
-    newrgb_backend::generate_zip().await;
-    "Done"
+async fn generate_zip() -> io::Result<&'static str> {
+    newrgb_backend::generate_zip().await?;
+    Ok("Done")
 }
 
-#[get("/background/{i}.png")]
-async fn background(i: web::Path<u32>) -> Result<NamedFile> {
-    Ok(NamedFile::open(&format!("background/{i}.png"))?)
+#[get("/background/<i>")]
+async fn background(i: usize) -> io::Result<NamedFile> {
+    NamedFile::open(format!("background/{i}.png")).await
 }
 
-#[actix_web::main]
-async fn main() -> io::Result<()> {
-    let ip = if cfg!(debug_assertions) {
-        "127.0.0.1"
-    } else {
-        "0.0.0.0"
-    };
-    HttpServer::new(|| {
-        App::new()
-            .service(index)
-            .service(generate_zip)
-            .service(background)
-    })
-    .bind((ip, 6969))?
-    .run()
-    .await
+#[launch]
+fn rocket() -> Rocket<Build> {
+    rocket::build().mount("/", routes![index, generate_zip, background])
 }
